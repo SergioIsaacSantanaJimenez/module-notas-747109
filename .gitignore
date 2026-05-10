@@ -1,0 +1,36 @@
+# Dependencias
+node_modules/
+
+# Compilado TypeScript
+dist/
+
+# Build artifacts de SAM
+.aws-sam/
+
+# Mapas de source y declaraciones (generados)
+*.js.map
+*.d.ts
+
+# Variables de entorno (secretos)
+.env
+.env.local
+.env.*.local
+
+# SAM config local (credenciales)
+samconfig.toml.local
+
+# Cobertura de tests
+coverage/
+
+# Zips de Lambda
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

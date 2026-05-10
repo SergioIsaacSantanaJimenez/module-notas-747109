@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Modulo Notas de Venta con metricas CloudWatch - 747109
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: nodejs18.x
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: "1"
+        BUCKET_NAME: "747109-esi3898k-examen2"
+        TABLE_CLIENTES: "clientes"
+        TABLE_DOMICILIOS: "domicilios"
+        TABLE_PRODUCTOS: "productos"
+        TABLE_NOTAS: "notas_venta"
+        SNS_TOPIC_ARN: !Ref NotificacionesTopic
+        NODE_ENV: "production"
+
+Resources:
+
+  NotasRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: notas-role-747109
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NotasPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/clientes"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/domicilios"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/productos"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/notas_venta"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:HeadObject
+                  - s3:CopyObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::747109-esi3898k-examen2"
+                  - !Sub "arn:aws:s3:::747109-esi3898k-examen2/*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref NotificacionesTopic
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  NotasFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: notas-747109
+      Handler: dist/index.handler
+      CodeUri: .
+      Role: !GetAtt NotasRole.Arn
+      Events:
+        Notas:
+          Type: Api
+          Properties:
+            Path: /notas
+            Method: ANY
+        NotasId:
+          Type: Api
+          Properties:
+            Path: /notas/{id}
+            Method: ANY
+        NotasDescargar:
+          Type: Api
+          Properties:
+            Path: /notas/{id}/descargar
+            Method: ANY
+        NotasEnviar:
+          Type: Api
+          Properties:
+            Path: /notas/{id}/enviar
+            Method: ANY
+
+  # La tabla notas_venta ya existe del stack del examen 1. Se referencia por nombre.
+
+  PDFBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: "747109-esi3898k-examen2"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # SNS Topic — notas publica aqui, notificaciones suscribe
+  NotificacionesTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: notas-notificaciones-747109
+      DisplayName: "Notificaciones de Notas de Venta"
+
+  # Alarma: si hay mas de 5 errores 5xx en 5 minutos, algo anda mal en produccion
+  Alarma5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: "notas-747109-errores-5xx"
+      AlarmDescription: "Mas de 5 errores 5xx en 5 minutos en el modulo de notas"
+      Namespace: "NotasVenta/Notas"
+      MetricName: "HTTP_5xx"
+      Dimensions:
+        - Name: Environment
+          Value: production
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # Dashboard con 2 widgets requeridos
+  NotasDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: "notas-747109-dashboard"
+      DashboardBody: >
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 24, "height": 7,
+              "properties": {
+                "title": "Latencia de Requests — Percentiles p50 / p90 / p99",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  [ "NotasVenta/Notas", "RequestLatency", "Environment", "production", { "stat": "p50", "label": "p50 (mediana)", "color": "#1f77b4" } ],
+                  [ "NotasVenta/Notas", "RequestLatency", "Environment", "production", { "stat": "p90", "label": "p90", "color": "#ff7f0e" } ],
+                  [ "NotasVenta/Notas", "RequestLatency", "Environment", "production", { "stat": "p99", "label": "p99", "color": "#d62728" } ]
+                ],
+                "period": 60,
+                "yAxis": { "left": { "min": 0, "label": "Milisegundos" } },
+                "region": "us-east-2"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 7, "width": 24, "height": 7,
+              "properties": {
+                "title": "HTTP Status Codes — Comportamiento de Requests",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  [ "NotasVenta/Notas", "HTTP_2xx", "Environment", "production", { "stat": "Sum", "label": "2xx Exitosos", "color": "#2ca02c" } ],
+                  [ "NotasVenta/Notas", "HTTP_4xx", "Environment", "production", { "stat": "Sum", "label": "4xx Error Cliente", "color": "#ff7f0e" } ],
+                  [ "NotasVenta/Notas", "HTTP_5xx", "Environment", "production", { "stat": "Sum", "label": "5xx Error Servidor", "color": "#d62728" } ]
+                ],
+                "period": 60,
+                "yAxis": { "left": { "min": 0, "label": "Conteo" } },
+                "region": "us-east-2"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  ApiUrl:
+    Description: "URL del API de Notas"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  SnsTopicArn:
+    Description: "ARN del SNS Topic de notificaciones"
+    Value: !Ref NotificacionesTopic
+    Export:
+      Name: "notas-747109-sns-topic-arn"
+  FunctionArn:
+    Description: "ARN de la Lambda de Notas"
+    Value: !GetAtt NotasFunction.Arn
