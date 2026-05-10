@@ -44,12 +44,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalizar owner a minusculas
+        id: meta
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Build y push imagen Docker
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/module-notas-747109:latest
+          tags: ghcr.io/${{ steps.meta.outputs.owner }}/module-notas-747109:latest
 
       - name: Configurar SAM CLI
         uses: aws-actions/setup-sam@v2
